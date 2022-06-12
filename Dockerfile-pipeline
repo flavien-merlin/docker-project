@@ -1,0 +1,42 @@
+# Stage 1 : Builder
+FROM python:latest as builder
+ENV PYTHONUNBUFFERED=1 
+WORKDIR /app
+COPY flask-api/ ./flask-api
+WORKDIR /wheels
+COPY flask-api/requirements.txt ./requirements.txt
+RUN pip wheel -r requirements.txt 
+
+# Stage 2 : Unit Test
+FROM python:latest as unit-tests
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+RUN     pip install -r /wheels/requirements.txt \
+                      -f /wheels \
+       && rm -rf /wheels \
+       && rm -rf /root/.cache/pip/* 
+
+COPY --from=builder /app/flask-api/ ./
+RUN ["make", "test"]
+
+# Stage 3 : Linting
+FROM eeacms/pylint:1.7.2.2 as linting
+WORKDIR /code
+COPY --from=builder /app/flask-api/pylint.cfg /etc/pylint.cfg
+COPY --from=builder /app/flask-api/*.py ./
+COPY --from=builder /app/flask-api/api ./api
+RUN ["/docker-entrypoint.sh", "pylint"]
+
+# Stage 4 : Serve the web page
+FROM python:3.9-alpine as serve
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+RUN     pip install -r /wheels/requirements.txt \
+                      -f /wheels \
+       && rm -rf /wheels \
+       && rm -rf /root/.cache/pip/* 
+
+COPY --from=builder /app/flask-api/*.py ./
+COPY --from=builder /app/flask-api/api ./api
+EXPOSE 8080
+CMD ["python3", "run_app.py"]
